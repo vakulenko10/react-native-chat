@@ -5,43 +5,42 @@ import {
   TextInput,
   Button,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
 } from "react-native";
-import { auth, db } from "../firebaseConfig";
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
 } from "firebase/auth";
-import {
-  collection,
-  getDocs,
-  query,
-  where,
-  doc,
-  setDoc,
-} from "firebase/firestore";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { doc, setDoc, getDocs, collection, query, where } from "firebase/firestore";
+import { auth, db } from "../firebaseConfig";
 
-type RootStackParamList = {
-  Login: undefined;
-  Home: undefined; // Add Home screen type
-  Chat: { recipientId: string };
-};
-
-type Props = NativeStackScreenProps<RootStackParamList, "Login">;
-
-const LoginScreen: React.FC<Props> = ({ navigation }) => {
+const LoginScreen: React.FC = () => {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [username, setUsername] = useState<string>("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSigningUp, setIsSigningUp] = useState<boolean>(false); // Toggle between Login and Signup
 
   const handleLogin = async () => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      // Redirect to Home after successful login
-      navigation.replace("Home");
+      let loginEmail = email;
+
+      // If the input is a username, fetch the corresponding email from Firestore
+      if (username && !email) {
+        const usersQuery = query(
+          collection(db, "users"),
+          where("username", "==", username)
+        );
+        const querySnapshot = await getDocs(usersQuery);
+
+        if (!querySnapshot.empty) {
+          loginEmail = querySnapshot.docs[0].data().email;
+        } else {
+          throw new Error("Username not found");
+        }
+      }
+
+      await signInWithEmailAndPassword(auth, loginEmail, password);
+      // The onAuthStateChanged listener in the BottomTabNavigator will handle navigation
     } catch (error: any) {
       alert(error.message);
     }
@@ -49,6 +48,11 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
 
   const handleSignUp = async () => {
     try {
+      if (!email || !password || !username) {
+        alert("All fields are required for Signup");
+        return;
+      }
+
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         email,
@@ -64,54 +68,50 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
       });
 
       alert("User registered successfully!");
+      setIsSigningUp(false); // Switch to Login mode after successful signup
     } catch (error: any) {
       alert(error.message);
     }
   };
 
-  const handleSearch = async (searchQuery: string) => {
-    try {
-      const usersRef = collection(db, "users");
-
-      // Query by username
-      const usernameQuery = query(usersRef, where("username", "==", searchQuery));
-      const usernameSnapshot = await getDocs(usernameQuery);
-
-      // Query by email
-      const emailQuery = query(usersRef, where("email", "==", searchQuery));
-      const emailSnapshot = await getDocs(emailQuery);
-
-      // Combine results
-      const results = [
-        ...usernameSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
-        ...emailSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
-      ];
-
-      // Remove duplicates if the same user matches both queries
-      const uniqueResults = Array.from(
-        new Map(results.map((item) => [item.id, item])).values()
-      );
-
-      setSearchResults(uniqueResults);
-    } catch (error: any) {
-      console.error("Error searching users: ", error.message);
-    }
-  };
-
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Login</Text>
+      <Text style={styles.title}>{isSigningUp ? "Sign Up" : "Login"}</Text>
 
-      {/* Email */}
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-      />
+      {/* Username Input for Signup or Login */}
+      {isSigningUp && (
+        <TextInput
+          style={styles.input}
+          placeholder="Username"
+          value={username}
+          onChangeText={setUsername}
+        />
+      )}
 
-      {/* Password */}
+      {!isSigningUp && (
+        <TextInput
+          style={styles.input}
+          placeholder="Username or Email"
+          value={email || username}
+          onChangeText={(text) => {
+            setEmail("");
+            setUsername(text);
+          }}
+        />
+      )}
+
+      {/* Email Input for Signup */}
+      {isSigningUp && (
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+        />
+      )}
+
+      {/* Password Input */}
       <TextInput
         style={styles.input}
         placeholder="Password"
@@ -120,31 +120,23 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
         secureTextEntry
       />
 
-      {/* Username (only for signup) */}
-      <TextInput
-        style={styles.input}
-        placeholder="Username"
-        value={username}
-        onChangeText={setUsername}
+      {/* Button for Login or Signup */}
+      <Button
+        title={isSigningUp ? "Sign Up" : "Login"}
+        onPress={isSigningUp ? handleSignUp : handleLogin}
       />
 
-      <Button title="Login" onPress={handleLogin} />
-      <Button title="Sign Up" onPress={handleSignUp} />
-
-      {/* Search Results */}
-      <FlatList
-        data={searchResults}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            onPress={() => navigation.navigate("Chat", { recipientId: item.id })}
-          >
-            <Text style={styles.result}>
-              {item.username || item.email}
-            </Text>
-          </TouchableOpacity>
-        )}
-      />
+      {/* Toggle between Login and Signup */}
+      <TouchableOpacity
+        onPress={() => setIsSigningUp(!isSigningUp)}
+        style={styles.toggleButton}
+      >
+        <Text style={styles.toggleText}>
+          {isSigningUp
+            ? "Already have an account? Login"
+            : "Don't have an account? Sign Up"}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 };
@@ -168,10 +160,13 @@ const styles = StyleSheet.create({
     marginVertical: 8,
     borderRadius: 4,
   },
-  result: {
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ccc",
+  toggleButton: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+  toggleText: {
+    color: "#007bff",
+    fontWeight: "bold",
   },
 });
 
